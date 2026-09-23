@@ -21,9 +21,6 @@ public class Launcher extends JFrame {
         setLocationRelativeTo(null);
 
         // ---- Hardcoded / bundled projects ----
-        registerProject(new HelloWorldProject());
-        registerProject(new CalculatorProject());
-        registerProject(new MyGodotGame());
         // registerProject(new NextYearsProject());
 
         // ---- Projects added at runtime in a previous session ----
