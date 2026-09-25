@@ -6,6 +6,15 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.swing.*;
+import java.awt.*;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+
 public class Launcher extends JFrame {
 
     private final CardLayout cardLayout = new CardLayout();
@@ -15,7 +24,7 @@ public class Launcher extends JFrame {
     private final JList<String> sidebarList = new JList<>(listModel);
 
     public Launcher() {
-        super("School Projects");
+        super("WorkBench Launcher");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(900, 600);
         setLocationRelativeTo(null);
@@ -24,7 +33,7 @@ public class Launcher extends JFrame {
         // registerProject(new NextYearsProject());
 
         // ---- Projects added at runtime in a previous session ----
-        for (ExternalAppProject saved : ProjectRegistry.loadAll()) {
+        for (ManagedExecutable saved : ProjectRegistry.loadAll()) {
             registerProject(saved);
         }
 
@@ -44,7 +53,6 @@ public class Launcher extends JFrame {
         sidebarPanel.add(sidebarScroll, BorderLayout.CENTER);
         sidebarPanel.add(addButton, BorderLayout.SOUTH);
 
-        // Placeholder shown before anything is selected
         JPanel welcome = new JPanel(new BorderLayout());
         welcome.add(new JLabel("Select a project on the left", SwingConstants.CENTER), BorderLayout.CENTER);
         contentArea.add(welcome, "welcome");
@@ -54,38 +62,69 @@ public class Launcher extends JFrame {
         add(contentArea, BorderLayout.CENTER);
     }
 
-    /** Registers a project both in-memory and in the visible sidebar/content area. */
     private void registerProject(ProjectModule project) {
         projects.add(project);
         listModel.addElement(project.getName());
         contentArea.add(project.getPanel(), project.getName());
     }
 
-    /** Opens a file picker, wraps the chosen executable as a project, registers it, and saves it. */
+    /**
+     * Opens a file picker, copies the chosen executable into the launcher's
+     * own managed storage (projects/executeables/unix or /windows), sets up
+     * a dedicated Wine prefix for .exe files, registers the project, and
+     * saves it so it's still there next time the launcher starts.
+     */
     private void addExternalProjectViaFileChooser() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Select an executable (.AppImage, .exe, .app)");
+        chooser.setDialogTitle("Select an executable (.AppImage or .exe)");
         int result = chooser.showOpenDialog(this);
         if (result != JFileChooser.APPROVE_OPTION) return;
 
         File selected = chooser.getSelectedFile();
+        String fileName = selected.getName();
+        String lower = fileName.toLowerCase();
 
-        String name = JOptionPane.showInputDialog(this, "Name for this project:", selected.getName());
+        ManagedExecutable.Type type;
+        String subfolder;
+        if (lower.endsWith(".appimage") || lower.endsWith(".x86_64")) {
+            type = ManagedExecutable.Type.APPIMAGE;
+            subfolder = "projects/executeables/unix";
+        } else if (lower.endsWith(".exe")) {
+            type = ManagedExecutable.Type.WINDOWS_EXE;
+            subfolder = "projects/executeables/windows";
+        } else {
+            JOptionPane.showMessageDialog(this, "Only .AppImage and .exe files are supported.",
+                    "Unsupported file", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String suggestedName = fileName.replaceAll("(?i)\\.(appimage|exe)$", "");
+        String name = JOptionPane.showInputDialog(this, "Name for this project:", suggestedName);
         if (name == null || name.isBlank()) return; // cancelled
 
-        String os = System.getProperty("os.name").toLowerCase();
-        String windowsPath = null, linuxPath = null, macPath = null;
-        String absolutePath = selected.getAbsolutePath();
+        try {
+            File destDir = AppPaths.resolve(subfolder);
+            destDir.mkdirs();
+            File destFile = new File(destDir, fileName);
+            Files.copy(selected.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if (type == ManagedExecutable.Type.APPIMAGE) destFile.setExecutable(true);
 
-        if (os.contains("win")) windowsPath = absolutePath;
-        else if (os.contains("mac")) macPath = absolutePath;
-        else linuxPath = absolutePath;
+            String storedRelPath = subfolder + "/" + fileName;
+            String winePrefixRelPath = null;
+            if (type == ManagedExecutable.Type.WINDOWS_EXE) {
+                String baseName = fileName.replaceAll("(?i)\\.exe$", "");
+                winePrefixRelPath = "projects/prefixes/" + baseName;
+            }
 
-        ExternalAppProject newProject = new ExternalAppProject(name, windowsPath, linuxPath, macPath);
-        registerProject(newProject);
-        ProjectRegistry.save(name, windowsPath, linuxPath, macPath);
+            ManagedExecutable newProject = new ManagedExecutable(name, storedRelPath, type, winePrefixRelPath);
+            registerProject(newProject);
+            ProjectRegistry.save(name, storedRelPath, type, winePrefixRelPath);
+            sidebarList.setSelectedIndex(projects.size() - 1);
 
-        sidebarList.setSelectedIndex(projects.size() - 1); // jump straight to the new project
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Failed to copy executable: " + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     public static void main(String[] args) {
